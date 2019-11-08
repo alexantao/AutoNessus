@@ -12,9 +12,13 @@
 #  Email: grandy[at]redteamsecure.com  #
 #                                      #
 ########################################
+from datetime import datetime
 
-try:import requests
-except: print('Need to install the Requests module before execution'); exit()
+try:
+    import requests
+except:
+    print('Need to install the Requests module before execution')
+    exit()
 import json
 import sys
 import argparse
@@ -38,25 +42,30 @@ group.add_argument('-sS', '--start', dest='start_scan_id', type=str, help='Start
 group.add_argument('-sR', '--resume', dest='resume_scan_id', type=str, help='Resume a specified scan using scan id')
 group.add_argument('-pS', '--pause', dest='pause_scan_id', type=str, help='Pause a specified scan using scan id')
 group.add_argument('-sP', '--stop', dest='stop_scan_id', type=str, help='Stop a specified scan using scan id')
+group.add_argument('-e', '--exportid', dest='exportid', type=str, help='Export a specified scan using scan id')
+group.add_argument('-eA', '--exportall', dest='export_all_scans', action='store_true', help='Export all scans.')
+parser.add_argument('-d', '--fromdate', dest='minimumdate', type=str, help='Consider only Scans from Date (format: '
+                                                                           'YYYY.MM.DD)')
 
 args = parser.parse_args()
 
 if not len(sys.argv) > 1:
     parser.print_help()
-    print
     exit()
 
 # Specify credentials for Nessus and initialize vars
-url = 'https://localhost:8834'
+url = ''
 verify = False
 token = ''
-username = 'xxxxx'
-password = 'xxxxx'
+username = ''
+password = ''
+
 
 class create_menu:
     '''This is used to build an instance of the menu object
        and can be called from the main program to instantiate the menu
        with passed variables.'''
+
     def __init__(self, menu, text, other):
         self.text = text
         self.menu = menu
@@ -66,14 +75,18 @@ class create_menu:
         option_length_menu = len(menu)
         option_length_text = len(text)
         if self.other != 'Null':
-            print('%s' + (20-option_length_menu) * ' ' + '  :    %s' + (15-option_length_text)*' ' +  ':    %s') %(menu,text,other)
+            print(
+                '%s' + (20 - option_length_menu) * ' ' + '  :    %s' + (15 - option_length_text) * ' ' + ':    %s') % (
+                menu, text, other)
 
         else:
-            print('%s' + (15-option_length_menu) * ' ' + '  :  %s') %(menu,text)
+            print('%s' + (15 - option_length_menu) * ' ' + '  :  %s') % (menu, text)
         return
+
 
 def build_url(resource):
     return '{0}{1}'.format(url, resource)
+
 
 def connect(method, resource, data=None, params=None):
     """
@@ -100,7 +113,7 @@ def connect(method, resource, data=None, params=None):
     # Exit if there is an error.
     if r.status_code != 200:
         e = r.json()
-        print e['error']
+        print(e['error'])
         sys.exit()
 
     # When downloading a scan we need the raw contents not the JSON data.
@@ -133,7 +146,7 @@ def get_policies():
     return dict((p['title'], p['uuid']) for p in data['templates'])
 
 
-def get_scans():
+def get_scans(mindate=""):
     """
     Get history ids
     Create a dictionary of scans and uuids
@@ -141,12 +154,28 @@ def get_scans():
 
     status_dict = {}
     name_dict = {}
-    data = connect('GET', '/scans/')
+    params = {}
+    timestamp = 0
+
+    # check date limit
+    if mindate is not None:
+        try:
+            scandate = datetime.strptime(mindate, "%Y.%m.%d").timetuple()
+            timestamp = int(time.mktime(scandate))
+            params = {"last_modification_date": timestamp}
+            print(params)
+        except Exception as e:
+            print('Invalid date format: {0}.'.format(e))
+            logout()
+
+    data = connect('GET', '/scans/', params)
+    print
     for p in data['scans']:
-        status_dict[p['id']] = p['status']
-        name_dict[p['id']] = p['name']
-    #status_dict = dict((p['name'], p['status']) for p in data['scans'])
-    #id_dict = dict((b['name'], b['id']) for b in data['scans'])
+        if p['last_modification_date'] >= timestamp:    # done this since params is NOT working here
+            status_dict[p['id']] = p['status']
+            name_dict[p['id']] = p['name']
+    # status_dict = dict((p['name'], p['status']) for p in data['scans'])
+    # id_dict = dict((b['name'], b['id']) for b in data['scans'])
 
     return status_dict, name_dict
 
@@ -160,14 +189,14 @@ def get_history_ids(sid):
     """
     data = connect('GET', '/scans/{0}'.format(sid))
     temp_hist_dict = dict((h['history_id'], h['status']) for h in data['history'])
-    temp_hist_dict_rev = {a:b for b,a in temp_hist_dict.items()}
+    temp_hist_dict_rev = {a: b for b, a in temp_hist_dict.items()}
     try:
-        for key,value in temp_hist_dict_rev.items():
-            print key
-            print value
+        for key, value in temp_hist_dict_rev.items():
+            print(key)
+            print(value)
     except:
         pass
-    #return dict((h['uuid'], h['history_id']) for h in data['history'])
+    # return dict((h['uuid'], h['history_id']) for h in data['history'])
 
 
 def get_scan_history(sid, hid):
@@ -185,10 +214,10 @@ def get_status(sid):
     # Get the status of a scan by the sid.
     # Print out the scan status
 
-    time.sleep(3) # sleep to allow nessus to process the previous status change
+    time.sleep(3)  # sleep to allow nessus to process the previous status change
     temp_status_dict, temp_name_dict = get_scans()
-    print '\nScan Name           Status  '
-    print '---------------------------------------'
+    print('\nScan Name           Status  ')
+    print('---------------------------------------')
     for key, value in temp_name_dict.items():
         if str(key) == str(sid):
             create_menu(value, temp_status_dict[key], 'Null')
@@ -200,20 +229,60 @@ def launch(sid):
     data = connect('POST', '/scans/{0}/launch'.format(sid))
     return data['scan_uuid']
 
+
 def pause(sid):
     # Pause the scan specified by the sid.
     connect('POST', '/scans/{0}/pause'.format(sid))
     return
+
 
 def resume(sid):
     # Resume the scan specified by the sid.
     connect('POST', '/scans/{0}/resume'.format(sid))
     return
 
+
 def stop(sid):
     # Resume the scan specified by the sid.
     connect('POST', '/scans/{0}/stop'.format(sid))
     return
+
+# Strips invalid chars from filename
+def clean_filename(filename):
+    invalid = '<>:"/\|?* '
+    for char in invalid:
+        filename = filename.replace(char, '_')
+    return filename
+
+def export(sid, name):
+    # Export the scan specified by the sid.
+
+    # 1- Ask for the export
+    params = {'format': 'nessus'}
+    filetoken = connect('POST', '/scans/{0}/export'.format(sid), params)
+
+    # 2- Wait until the export is ready to be downloaded
+    fileready = "notready"
+    maxtries = 10
+    trying = 0
+    while fileready != "ready" and trying < maxtries:
+        trying += 1
+        response = connect('GET', '/tokens/{0}/status'.format(filetoken['token']))
+        fileready = response['status']
+        time.sleep(1)
+
+    # 3- Export is ready. Download the file
+    if fileready == "ready":
+        nome_arq = '{0} - {1}.nessus'.format(sid, name)
+
+        arquivo = open(clean_filename(nome_arq), mode='wb')
+        filecontents = connect('GET', '/tokens/{0}/download'.format(filetoken['token']))
+
+        arquivo.write(filecontents)
+        arquivo.close()
+
+    return
+
 
 def logout():
     # Logout of Nessus.
@@ -221,7 +290,6 @@ def logout():
     connect('DELETE', '/session')
     print('Logged Out')
     exit()
-
 
 
 if __name__ == '__main__':
@@ -232,38 +300,38 @@ if __name__ == '__main__':
         exit()
 
     print('Logging in...')
-    try:token = login(username, password)
-    except: print('Unable to login :('); exit()
+    try:
+        token = login(username, password)
+    except:
+        print('Unable to login :(')
+        exit()
     print('Logged in!\n\n')
 
-
-###### Display all policies  #######
+    ###### Display all policies  #######
     if args.policy_list:
         # If -p flag is specified, print the policy list and exit
 
-        print "Printing Policies \n\n"
+        print("Printing Policies \n\n")
         policy_dict = get_policies()
-        print 'Policy Name                              UUID'
-        print '--------------------------------------------------'
-        for title,uuid in policy_dict.items():
-            create_menu(title,uuid, 'Null')
+        print('Policy Name                              UUID')
+        print('--------------------------------------------------')
+        for title, uuid in policy_dict.items():
+            create_menu(title, uuid, 'Null')
 
-
-###### Display all scans  #######
+    ###### Display all scans  #######
     elif args.scan_list:
         # If -l flag is specified, print the list of scans
 
         temp_status_dict, temp_name_dict = get_scans()
-        print 'Scan Name                  Status              ID'
-        print '-------------------------------------------------'
+        print('Scan Name                  Status              ID')
+        print('-------------------------------------------------')
 
-        for status_id,status_value in temp_status_dict.items():
+        for status_id, status_value in temp_status_dict.items():
             for name_id, name_value in temp_name_dict.items():
                 if status_id == name_id:
-                    create_menu(name_value,status_value, status_id)
+                    create_menu(name_value, status_value, status_id)
 
-
-###### Start the scan  #######
+    ###### Start the scan  #######
     if args.start_scan_id:
         # If -sS [scan_id] flag is passed, start the specified scan
         start_id = args.start_scan_id
@@ -272,8 +340,9 @@ if __name__ == '__main__':
         # Grab the status of the scan and either resume or start based on status
         for key, value in temp_name_dict.items():
             if str(key) == str(start_id):
-                if temp_status_dict[key].lower() in ['stopped', 'completed' , 'aborted', 'canceled', 'on demand', 'empty']:
-                    print('Launching Scan %s') %key
+                if temp_status_dict[key].lower() in ['stopped', 'completed', 'aborted', 'canceled', 'on demand',
+                                                     'empty']:
+                    print('Launching Scan %s') % key
                     launch(start_id)
                 elif temp_status_dict[key].lower() in ['running']:
                     print('Scan already running!')
@@ -286,7 +355,7 @@ if __name__ == '__main__':
         # Re-grab the scans to get the updated status
         get_status(start_id)
 
-###### Resume the scan  #######
+    ###### Resume the scan  #######
     if args.resume_scan_id:
         # If -sR [scan_id] flag is passed, start the specified scan
         start_id = args.resume_scan_id
@@ -296,7 +365,7 @@ if __name__ == '__main__':
         for key, value in temp_name_dict.items():
             if str(key) == str(start_id):
                 if temp_status_dict[key].lower() in ['paused']:
-                    print('Resuming Scan %s') %key
+                    print('Resuming Scan %s') % key
                     resume(start_id)
                 elif temp_status_dict[key].lower() in ['running']:
                     print('Scan already running!')
@@ -309,7 +378,7 @@ if __name__ == '__main__':
         # Re-grab the scans to get the updated status
         get_status(start_id)
 
-###### Pause the scan  #######
+    ###### Pause the scan  #######
     elif args.pause_scan_id:
         # If -pS [scan_id] flag is passed, pause the specified scan
         pause_id = args.pause_scan_id
@@ -320,7 +389,7 @@ if __name__ == '__main__':
                     print('Scan already paused!')
                     logout()
                 elif temp_status_dict[key].lower() in ['running']:
-                    print('Pausing Scan %s') %key
+                    print('Pausing Scan %s') % key
                     pause(pause_id)
                 else:
                     print('Scan unable to be paused')
@@ -329,7 +398,7 @@ if __name__ == '__main__':
         # Re-grab the scans to get the updated status
         get_status(pause_id)
 
-###### Stop the scan  #######
+    ###### Stop the scan  #######
     elif args.stop_scan_id:
         # If -sP [scan_id] flag is passed, stop the specified scan
 
@@ -338,7 +407,7 @@ if __name__ == '__main__':
         for key, value in temp_name_dict.items():
             if str(key) == str(stop_id):
                 if temp_status_dict[key].lower() in ['paused', 'running']:
-                    print('Stopping Scan %s') %key
+                    print('Stopping Scan %s') % key
                     stop(stop_id)
                     logout()
                 else:
@@ -347,3 +416,20 @@ if __name__ == '__main__':
 
         # Re-grab the scans to get the updated status
         get_status(stop_id)
+
+    if args.exportid:
+        scanid = args.exportid
+        temp_status_dict, temp_name_dict = get_scans()
+        for key, value in temp_name_dict.items():
+            if str(key) == str(scanid):
+                print('Exporting Scan: {0}'.format(value))
+                export(scanid, value)
+
+        logout()
+    elif args.export_all_scans:
+        print('Minimum date: {0}'.format(args.minimumdate))
+        temp_status_dict, temp_name_dict = get_scans(mindate=args.minimumdate)
+        for id, nome in temp_name_dict.items():
+                print('Exporting Scan: {0}'.format(nome))
+                export(id, nome)
+
